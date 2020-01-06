@@ -770,12 +770,13 @@ int socket_server_main(void **datahere)
 	#define BUFSIZE 1024
 
 	int serverwidth = 1920;
-	int width = 640;
-	int height = 480;
-	int bytedepth = 4;
+	unsigned int width = 640;
+	unsigned int height = 480;
+	unsigned int bytedepth = 4;
 	int sendSteps = 24;
 	int sendSize = (width * height * bytedepth)/sendSteps;
 	int sendSleep = 1;
+        char* resizedFrame = (char*)malloc(width*height*bytedepth+1);
         while (true)
         {
                 char buffer[BUFSIZE];
@@ -788,10 +789,15 @@ int socket_server_main(void **datahere)
                         sprintf(str, "Received message from %s: %s;;; wil send them data at %p\n", inet_ntoa(from.sin_addr), buffer, Data->cpu_frame);
                         printfN(str);
 
+                        // First create our 640*480 rect
+                        for (unsigned int i = 0; i < height; i++)
+                                memcpy(resizedFrame + (width * i * bytedepth), (const char*)Data->cpu_frame + ((serverwidth * bytedepth) * i), width * bytedepth); 
+
 			int sentb;
 			for (int i = 0; i < sendSteps; i++)
 			{
-				sentb = sendto(socketS, (const char*)Data->cpu_frame + ((sendSize + serverwidth - width) * i), sendSize, 0, (sockaddr*)&from, fromlen);
+				//sentb = sendto(socketS, (const char*)Data->cpu_frame + (sendSize * i), sendSize, 0, (sockaddr*)&from, fromlen);
+                                sentb = sendto(socketS, (const char*)resizedFrame + (sendSize * i), sendSize, 0, (sockaddr*)&from, fromlen);
 				sprintf(str, "Sending chunk %d\n", i);
 				//printfN(str);
 				Sleep(sendSleep);
