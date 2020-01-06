@@ -115,6 +115,8 @@ DUPL_RETURN DUPLICATIONMANAGER::InitDupl(_In_ ID3D11Device* Device, UINT Output)
         return ProcessFailure(m_Device, L"Failed to get duplicate output in DUPLICATIONMANAGER", L"Error", hr, CreateDuplicationExpectedErrors);
     }
 
+
+
     return DUPL_RETURN_SUCCESS;
 }
 
@@ -193,6 +195,23 @@ DUPL_RETURN DUPLICATIONMANAGER::GetMouse(_Inout_ PTR_INFO* PtrInfo, _In_ DXGI_OU
 
     return DUPL_RETURN_SUCCESS;
 }
+
+
+void debugHR(HRESULT hr)
+{
+
+	char str[4096];
+	std::stringstream ss;
+	ss << "0x" << std::hex << hr << std::endl;
+
+
+	sprintf_s(str, "Op failed: %s\n", ss.str().c_str());
+	printfN(str);
+}
+
+
+
+bool cpu_frame_ready;
 
 
 //
@@ -291,16 +310,185 @@ DUPL_RETURN DUPLICATIONMANAGER::GetFrame(_Out_ FRAME_DATA* Data, _Out_ bool* Tim
     D3D11_TEXTURE2D_DESC frameDesc;
     Data->Frame->GetDesc(&frameDesc);
 
-    if (datagoeshere == NULL)
-    {
-            char str[1024];
-            sprintf_s(str, "Frame width: %d; frame height: %d; size: %d, type: %d; GUESS TYPE: %d; ADDR: %p\n", frameDesc.Width, frameDesc.Height, frameDesc.ArraySize, frameDesc.Format, DXGI_FORMAT_B8G8R8A8_UNORM, (void*)Data);
-            datagoeshere = (void*)Data;
-            printfN(str);
-    }
+    char str[1024];
 
+
+
+	ID3D11Texture2D* pTexture = NULL;
+	ID3D11Device* pd3dDevice = m_Device; // Don't forget to initialize this
+   
+
+	D3D11_TEXTURE2D_DESC newDesc = frameDesc;
+	newDesc.Usage = D3D11_USAGE_STAGING;
+	newDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+	newDesc.MiscFlags = 0;
+	newDesc.BindFlags = 0;
+	hr = pd3dDevice->CreateTexture2D(&newDesc, NULL, &pTexture); // If first run, init our texture for getting frame to CPU
+	if (FAILED(hr))
+	{
+		sprintf_s(str, "Create Texture2D failed...\n");
+		printfN(str);
+		debugHR(hr);
+		pTexture = NULL;
+	}
+
+
+	// Grab a device context
+	ID3D11DeviceContext* conty;
+	pd3dDevice->GetImmediateContext(&conty);
+
+	// Use our context to clone our frame into memory we can mangle
+	conty->CopyResource(pTexture, Data->Frame);
+
+	// Some indexing (DA FIRST ONE)
+	UINT subresource = D3D11CalcSubresource(0, 0, 0);
+
+	// Block GPU from touching our resource, grab a reference to it
+	D3D11_MAPPED_SUBRESOURCE resource;
+
+	hr = conty->Map(pTexture, subresource, D3D11_MAP_READ, 0, &resource);
+	if (FAILED(hr))
+	{
+		sprintf_s(str, "Map failed\n");
+		printfN(str);
+		debugHR(hr);
+	}
+
+
+	datagoeshere = Data;
+
+	const unsigned char* source = static_cast<const unsigned char*>(resource.pData);
+	Data->width = newDesc.Width;
+	Data->height = newDesc.Height;
+
+
+	unsigned int texsizebytes = resource.DepthPitch; // Width*Height*BitDepth // TODO: FIX
+
+	sprintf(str, "texsizebytes: %d\npitch: %d\ndepth: %d\nresource.pData: %p\n", texsizebytes, resource.RowPitch, resource.DepthPitch, resource.pData);
+	//printfN(str);
+
+
+	if (texsizebytes != Data->cpu_frame_size)
+	{
+		sprintf(str, "CPU FRAME SIZE CHANGED!!!!!!, oldsize: %u, newsize: %u\n\n", Data->cpu_frame_size, texsizebytes);
+		printfN(str);
+	}
+
+	// If first run, malloc buffer to copy frames into
+	if (cpu_frame_ready == false || texsizebytes != Data->cpu_frame_size)
+	{
+		Data->cpu_frame = malloc(texsizebytes + 1);
+		if (Data->cpu_frame == NULL)
+		{
+			sprintf(str, "\n\nERROR, FAILED TO ALLOC CPU FRAME\n\n");
+			printfN(str);
+		}
+		else
+		{
+			Data->cpu_frame_size = texsizebytes;
+			cpu_frame_ready = true;
+		}
+	}
+
+	// If frame ready, copy to it, modulo for multi monitor too tho
+	if (cpu_frame_ready == true)
+	{
+		memcpy(Data->cpu_frame, resource.pData, texsizebytes);
+		sprintf(str, "Succsfully copied frame\n\n");
+		//printfN(str);
+	}
+
+	sprintf_s(str, "pitch: %u, depth: %u\n", resource.RowPitch, resource.DepthPitch);
+	//printfN(str);
+
+	sprintf_s(str, "pixel1: b: %u, g: %u, r: %u, a: %u\n", *(((BYTE*)resource.pData) + 0), *(((BYTE*)resource.pData) + 1), *(((BYTE*)resource.pData) + 2), *(((BYTE*)resource.pData) + 3));
+	//printfN(str);
+
+
+
+
+	// For when we're done copying, allow GPU to access again
+	conty->Unmap(pTexture, subresource);
+	if (FAILED(hr))
+	{
+		sprintf_s(str, "UnMap failed\n");
+		printfN(str);
+		debugHR(hr);
+	}
+
+
+	pTexture->Release();
+
+
+    
+
+	// Let the other thread know data has been setup
+	if (datagoeshere == NULL)
+	{
+		sprintf_s(str, "Frame width: %d; frame height: %d; size: %d, type: %d; GUESS TYPE: %d; ADDR: %p\n", frameDesc.Width, frameDesc.Height, frameDesc.ArraySize, frameDesc.Format, DXGI_FORMAT_B8G8R8A8_UNORM, (void*)Data);
+		printfN(str);
+		datagoeshere = (void*)Data;
+	}
+
+
+
+
+	/*
+
+
+	HEY DANTE
+	
+	//Variable Declaration
+	IDXGIOutputDuplication* lDeskDupl;
+	IDXGIResource* lDesktopResource = nullptr;
+	DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
+	ID3D11Texture2D* lAcquiredDesktopImage;
+	ID3D11Texture2D* lDestImage;
+	ID3D11DeviceContext* lImmediateContext;
+	UCHAR* g_iMageBuffer = nullptr;
+
+	//Screen capture start here
+	hr = lDeskDupl->AcquireNextFrame(20, &lFrameInfo, &lDesktopResource);
+
+	// >QueryInterface for ID3D11Texture2D
+	hr = lDesktopResource->QueryInterface(IID_PPV_ARGS(&lAcquiredDesktopImage));
+	lDesktopResource->Release();
+
+	// Copy image into GDI drawing texture
+	lImmediateContext->CopyResource(lDestImage, lAcquiredDesktopImage);
+	lAcquiredDesktopImage->Release();
+	lDeskDupl->ReleaseFrame();
+
+	// Copy GPU Resource to CPU
+	D3D11_TEXTURE2D_DESC desc;
+	lDestImage->GetDesc(&desc);
+	D3D11_MAPPED_SUBRESOURCE resource;
+	UINT subresource = D3D11CalcSubresource(0, 0, 0);
+	lImmediateContext->Map(lDestImage, subresource, D3D11_MAP_READ_WRITE, 0, &resource);
+
+	std::unique_ptr<BYTE> pBuf(new BYTE[resource.RowPitch * desc.Height]);
+	UINT lBmpRowPitch = lOutputDuplDesc.ModeDesc.Width * 4;
+	BYTE* sptr = reinterpret_cast<BYTE*>(resource.pData);
+	BYTE* dptr = pBuf.get() + resource.RowPitch * desc.Height - lBmpRowPitch;
+	UINT lRowPitch = std::min<UINT>(lBmpRowPitch, resource.RowPitch);
+
+	for (size_t h = 0; h < lOutputDuplDesc.ModeDesc.Height; ++h)
+	{
+		memcpy_s(dptr, lBmpRowPitch, sptr, lRowPitch);
+		sptr += resource.RowPitch;
+		dptr -= lBmpRowPitch;
+	}
+
+	lImmediateContext->Unmap(lDestImage, subresource);
+	long g_captureSize = lRowPitch * desc.Height;
+	g_iMageBuffer = new UCHAR[g_captureSize];
+	g_iMageBuffer = (UCHAR*)malloc(g_captureSize);
+
+	//Copying to UCHAR buffer 
+	memcpy(g_iMageBuffer, pBuf, g_captureSize);*/
     return DUPL_RETURN_SUCCESS;
-} 
+}
+
 
 //      
 // Release frame

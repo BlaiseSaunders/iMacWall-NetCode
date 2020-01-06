@@ -165,6 +165,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     datagoeshere = NULL;
+    cpu_frame_ready = false;
 
 
     // First of all, start our THREAD UP HAHHAHAHHAHA
@@ -726,6 +727,16 @@ void InitWinsock()
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
 
+
+
+char *grab_chunk()
+{
+
+
+	return NULL;
+}
+
+
 int socket_server_main(void **datahere)
 {
         SOCKET socketS;
@@ -746,26 +757,64 @@ int socket_server_main(void **datahere)
                 char str[1024];
                 sprintf_s(str, "WAITING FOR DATA TO NOT BE NULL datahere: %p\n", *datahere);
                 printfN(str);
+		Sleep(100);
         }
 
         char str[8192];
         sprintf_s(str, "DATA NOT NULL: datahere: %p\n", *datahere);
         printfN(str);
 
-        
+	FRAME_DATA* Data = (FRAME_DATA *)*datahere;
 
+
+	#define BUFSIZE 1024
+
+	int serverwidth = 1920;
+	int width = 640;
+	int height = 480;
+	int bytedepth = 4;
+	int sendSteps = 24;
+	int sendSize = (width * height * bytedepth)/sendSteps;
+	int sendSleep = 1;
         while (true)
         {
-                char buffer[1024];
+                char buffer[BUFSIZE];
                 ZeroMemory(buffer, sizeof(buffer));
-                printf("Waiting...\n");
+                sprintf(str, "Waiting for connection...\n");
+		printfN(str);
                 if (recvfrom(socketS, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromlen) != SOCKET_ERROR)
                 {
-                        sprintf(str, "Received message from %s: %s;;; wil send them data at %p\n", inet_ntoa(from.sin_addr), buffer, *datahere);
+			Data = (FRAME_DATA*)*datahere; // TODO: FIX
+                        sprintf(str, "Received message from %s: %s;;; wil send them data at %p\n", inet_ntoa(from.sin_addr), buffer, Data->cpu_frame);
                         printfN(str);
-                        sendto(socketS, (const char*)*datahere, sizeof(buffer), 0, (sockaddr*)&from, fromlen);
+
+			int sentb;
+			for (int i = 0; i < sendSteps; i++)
+			{
+				sentb = sendto(socketS, (const char*)Data->cpu_frame + ((sendSize + serverwidth - width) * i), sendSize, 0, (sockaddr*)&from, fromlen);
+				sprintf(str, "Sending chunk %d\n", i);
+				//printfN(str);
+				Sleep(sendSleep);
+			}
+
+			if (sentb == SOCKET_ERROR)
+			{
+				wchar_t* s = NULL;
+				FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+					NULL, WSAGetLastError(),
+					MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+					(LPWSTR)&s, 0, NULL);
+				sprintf(str, "\nSOCKET ERROR: %S\n", s);
+				printfN(str);
+				LocalFree(s);
+			}
+
+			//sendto(socketS, (const char*)buffer, sizeof(buffer), 0, (sockaddr*)&from, fromlen);
+			sprintf(str, "Sent! Sent bytes: %d\n", sentb);
+			printfN(str);
                 }
-                Sleep(50);
+
+                //Sleep(50);
         }
 
         closesocket(socketS);

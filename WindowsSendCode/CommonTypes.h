@@ -23,6 +23,7 @@
 #include <DirectXMath.h>
 #include <iostream> 
 #include <thread> 
+#include <sstream>
 
 
 
@@ -46,6 +47,7 @@ void printfN(char* inp);
 void testThread(int id, void **data);
 
 extern void* datagoeshere;
+extern bool cpu_frame_ready;
 
 
 typedef _Return_type_success_(return == DUPL_RETURN_SUCCESS) enum
@@ -119,7 +121,13 @@ typedef struct _FRAME_DATA
     _Field_size_bytes_((MoveCount * sizeof(DXGI_OUTDUPL_MOVE_RECT)) + (DirtyCount * sizeof(RECT))) BYTE* MetaData;
     UINT DirtyCount;
     UINT MoveCount;
+    int width;
+    int height;
+    void* cpu_frame;
+    unsigned int cpu_frame_size;
 } FRAME_DATA;
+
+
 
 //
 // A vertex with a position and texture coordinate
