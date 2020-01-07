@@ -6,13 +6,16 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <net/if.h>
+#include <net/if_arp.h>
+#include <ifaddrs.h>
 #include <SDL/SDL.h>
-//#include <SDL/SDL_image.h>
 
-#define BUFSIZE  1024
 #define SANITY_CHECK_INT 6969
+#define SANITY_CHECK_CHAR 'a'
 
 int tcpport = 6969;
 char *ip = "192.168.88.238";
@@ -37,7 +40,85 @@ struct setupData *setupInfo;
 SDL_Surface *screen;
 SDL_Surface *image;
 
-void init_bmp()
+char *getAdapterMac(int sockfd)
+{
+
+	char *name = NULL;
+
+
+	struct sockaddr_in addr;
+	struct ifaddrs* ifaddr;
+	struct ifaddrs* ifa;
+	socklen_t addr_len;
+
+	addr_len = sizeof (addr);
+	if (getsockname(sockfd, (struct sockaddr*)&addr, &addr_len) == -1)
+		printf("ERROR: Couldn't get sock name: %s", strerror(errno));
+	if (getifaddrs(&ifaddr) == -1)
+		printf("ERROR: Couldn't get ifaddr: %s", strerror(errno));
+
+
+	// TODO: More error checking
+
+	// look which interface contains the wanted IP.
+	// When found, ifa->ifa_name contains the name of the interface (eth0, eth1, ppp0...)
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+	{
+	    //printf("Iterating adapter...\n");
+	    if (ifa->ifa_addr)
+	    {
+		//printf("Entering addr\n");
+		if (AF_INET == ifa->ifa_addr->sa_family)
+		{
+		    //printf("It's IPv4\n");
+		    if (ifa->ifa_name)
+		    {
+				name = malloc(strlen(ifa->ifa_name)+1);
+				strcpy(name, ifa->ifa_name);
+		    }
+		}
+	    }
+	}
+	freeifaddrs(ifaddr);
+
+
+	if (name)
+		printf("Got interface name: %s\n", name);
+	else
+		printf("ERROR: Couldn't get interface name\n");
+
+
+
+	struct ifreq ifr;
+	size_t if_name_len = strlen(name);
+	if (if_name_len < sizeof(ifr.ifr_name)) 
+	{
+		memcpy(ifr.ifr_name, name, if_name_len);
+		ifr.ifr_name[if_name_len] = 0;
+	}
+	else
+		printf("ERROR: Interface name is too long\n");
+
+	
+	if (ioctl(sockfd, SIOCGIFHWADDR, &ifr)==-1)
+		printf("ERROR: Couldn't get MAC address: %s", strerror(errno));
+	
+	if (ifr.ifr_hwaddr.sa_family!=ARPHRD_ETHER) 
+		printf("ERROR: Only ethernet adapters supported for client...\n");
+
+
+	const unsigned char* mac = (unsigned char*)ifr.ifr_hwaddr.sa_data;
+	
+	char *macout = malloc(32);
+	sprintf(macout, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+	printf("Got MAC address: %s\n", macout);
+
+
+	return macout;
+}
+
+
+void init_screen_texture()
 {
 
 	Uint32 rmask, gmask, bmask, amask;
@@ -93,6 +174,7 @@ struct setupData *getSetupData(char *servAddr, int port)
 	bzero(&servaddr, sizeof (servaddr));
 	
 	
+	char *mac = getAdapterMac(sockfd);
 
 	servaddr.sin_family = AF_INET;
 	//servaddr.sin_addr.s_addr = inet_addr(servAddr);
@@ -108,8 +190,11 @@ struct setupData *getSetupData(char *servAddr, int port)
 		sleep(10);
 	}
 
-	char req[128] = "1";
-	write(sockfd, req, sizeof (req));
+	char req[256];
+	req[0] = SANITY_CHECK_CHAR;
+	memcpy(req+1, mac, strlen(mac)+1);
+	write(sockfd, req, strlen(mac)+2);
+	printf("MAGIC BYTE: %c\n", req[0]);
 	read(sockfd, (char *)dataBuf, sizeof (struct setupData));
 
 
@@ -124,11 +209,12 @@ struct setupData *getSetupData(char *servAddr, int port)
 
 	printf("Read data in: w: %d, h: %d, sanity: %d\n", dataBuf->width, dataBuf->height, dataBuf->sanitycheck);
 
+	free(mac);
+
 	return (struct setupData*)dataBuf;	
 }
 
 
-	//socketMain(&image);
 
 
 
@@ -172,8 +258,8 @@ start:
 
 
 
-	init_bmp();
-	printf("Loaded in da BMP!\n");
+	init_screen_texture();
+	printf("Initialized SDL!\n");
 	fflush(stdout);
 
 	int sockfd;
@@ -197,6 +283,7 @@ start:
 
 	int n;
 	unsigned int len;
+			
 
 	unsigned int recvsize = (setupInfo->width*setupInfo->height*4)/setupInfo->sendsteps;
 
@@ -224,9 +311,10 @@ start:
 	int maxerrors = 8;
 	int shouldexit = 0;
 	int totalfailures = 0;
+	Uint32 ticks;
 	while (1)
 	{
-
+		ticks = SDL_GetTicks();
 		/* First check for events */
 		while (SDL_PollEvent(&event))
 		{
@@ -317,7 +405,8 @@ start:
 		#endif
 
 		renderImage();
-		usleep(1);
+		printf("Frame took %d ms to render\n", SDL_GetTicks()-ticks);
+		//usleep();
 	}
 
 	SDL_Quit();
