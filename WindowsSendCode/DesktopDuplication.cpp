@@ -155,6 +155,8 @@ void printfN(char *inp) // MUST BE <1024 LONG
 
 void* datagoeshere;
 
+void serverStartThread(void** data);
+
 //
 // Program entry point
 //
@@ -169,7 +171,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 
 
     // First of all, start our THREAD UP HAHHAHAHHAHA
-    thread testy(testThread, 3, &datagoeshere);
+    thread starter(serverStartThread, &datagoeshere);
 
 
     INT SingleOutput;
@@ -378,7 +380,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         return static_cast<INT>(msg.wParam);
     }
 
-    testy.join();
+
+    starter.join();
 
     return 0;
 }
@@ -729,15 +732,126 @@ void InitWinsock()
 
 
 
-char *grab_chunk()
+
+unsigned int width = 320;
+unsigned int height = 240;
+int sendSteps = 40;
+int sendSleep = 5;
+
+
+#define SANITY_CHECK_INT  6969
+#define SANITY_CHECK_CHAR 'a'
+
+int socket_setup_thread(int port)
 {
+        InitWinsock();
+        char str[8192];
+
+        struct setupData
+        {
+                int width;
+                int height;
+                int port;
+                int id;
+                int maxerrors;
+                int endian;
+                int sendsteps;
+                int fullscreen;
+                int fullrebooterrors;
+                int sanitycheck;
+        };
+        struct setupData setupInfo;
+        setupInfo.width = width;
+        setupInfo.height = height;
+        setupInfo.port = 6970;
+        setupInfo.id = 1;
+        setupInfo.maxerrors = 8;
+        setupInfo.endian = 0;
+        setupInfo.sendsteps = sendSteps;
+        setupInfo.fullscreen = 1;
+        setupInfo.fullrebooterrors = 16;
+        setupInfo.sanitycheck = SANITY_CHECK_INT;
+
+        SOCKET s, new_socket;
+        struct sockaddr_in server, client;
+        int c;
+        char* message;
+
+        //Create a socket
+        if ((s = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
+        {
+                printf("Could not create socket : %d \n", WSAGetLastError());
+        }
+
+        printf("Socket created.\n");
+
+        //Prepare the sockaddr_in structure
+        server.sin_family = AF_INET;
+        server.sin_addr.s_addr = INADDR_ANY;
+        server.sin_port = htons(port);
+
+        //Bind
+        if (bind(s, (struct sockaddr*) & server, sizeof(server)) == SOCKET_ERROR)
+        {
+                sprintf(str, "Bind failed with error code : %d\n", WSAGetLastError());
+                printfN(str);
+        }
+
+        sprintf(str, "Bind done!\n");
+        printfN(str);
 
 
-	return NULL;
+        int recvbuflen = sizeof(int) + 32;
+        char *recvbuf = (char*)malloc(recvbuflen);
+
+        int iResult;
+
+
+        while (true)
+        {
+                //Listen to incoming connections
+                listen(s, 3);
+
+                //Accept and incoming connection
+                sprintf(str, "Waiting for incoming connections...\n\n");
+                printfN(str);
+
+                c = sizeof(struct sockaddr_in);
+                new_socket = accept(s, (struct sockaddr*) & client, &c);
+                if (new_socket == INVALID_SOCKET)
+                {
+                        sprintf(str, "Accept failed with error code : %d\n", WSAGetLastError());
+                        printfN(str);
+                }
+
+                sprintf(str, "Connection accepted\n");
+                printfN(str);
+
+                iResult = recv(new_socket, recvbuf, recvbuflen, 0);
+
+                sprintf(str, "Bytes received: %d\nDATA: %s\nMAGIC: %c\n", iResult, recvbuf+1, recvbuf); // TODO: SANITY CHECK
+                printfN(str);
+
+                char *mac = recvbuf + 1;
+                if (strcmp(mac, "08:00:27:67:FA:B6") == 0) // They equal
+                {
+                        sprintf(str, "\nDEBIAN INSTANCE DETECTED\n");
+                        printfN(str);
+                        setupInfo.port = 6970;
+                }
+
+                send(new_socket, (const char*)&setupInfo, sizeof(struct setupData), 0);
+                closesocket(new_socket);
+        }
+
+        return 0;
 }
 
 
-int socket_server_main(void **datahere)
+unsigned int* monitorXOff;
+unsigned int* monitorYOff;
+
+int socket_server_main(void **datahere, int port, int monitorXindex, int monitorYindex)
 {
         SOCKET socketS;
 
@@ -746,7 +860,7 @@ int socket_server_main(void **datahere)
         struct sockaddr_in from;
         int fromlen = sizeof(from);
         local.sin_family = AF_INET;
-        local.sin_port = htons(6969);
+        local.sin_port = htons(port);
         local.sin_addr.s_addr = INADDR_ANY;
 
         socketS = socket(AF_INET, SOCK_DGRAM, 0);
@@ -757,81 +871,141 @@ int socket_server_main(void **datahere)
                 char str[1024];
                 sprintf_s(str, "WAITING FOR DATA TO NOT BE NULL datahere: %p\n", *datahere);
                 printfN(str);
-		Sleep(100);
+                Sleep(100);
         }
 
         char str[8192];
         sprintf_s(str, "DATA NOT NULL: datahere: %p\n", *datahere);
         printfN(str);
 
-	FRAME_DATA* Data = (FRAME_DATA *)*datahere;
+        FRAME_DATA* Data = (FRAME_DATA*)*datahere;
 
 
-	#define BUFSIZE 1024
+        #define BUFSIZE 1024
 
-	int serverwidth = 1920;
-	unsigned int width = 640;
-	unsigned int height = 480;
-	unsigned int bytedepth = 4;
-	int sendSteps = 24;
-	int sendSize = (width * height * bytedepth)/sendSteps;
-	int sendSleep = 1;
-        char* resizedFrame = (char*)malloc(width*height*bytedepth+1);
+        int serverwidth = 1920;
+        int serverheight = 1080;
+        unsigned int bytedepth = 4;
+
+
+        
+
+
+        int sendSize = (width * height * bytedepth) / sendSteps;
+        char* resizedFrame = (char*)malloc(width * height * bytedepth + 1);
+        int timessent = 0;
+        sprintf(str, "Waiting for connection...\n");
+        printfN(str);
         while (true)
         {
+                sprintf(str, "innaloooopp\n");
+                //printfN(str);
                 char buffer[BUFSIZE];
                 ZeroMemory(buffer, sizeof(buffer));
-                sprintf(str, "Waiting for connection...\n");
-		printfN(str);
                 if (recvfrom(socketS, buffer, sizeof(buffer), 0, (sockaddr*)&from, &fromlen) != SOCKET_ERROR)
                 {
-			Data = (FRAME_DATA*)*datahere; // TODO: FIX
-                        sprintf(str, "Received message from %s: %s;;; wil send them data at %p\n", inet_ntoa(from.sin_addr), buffer, Data->cpu_frame);
-                        printfN(str);
+                        Data = (FRAME_DATA*)*datahere; // TODO: FIX
+                        sprintf(str, "Received message from %s: %s;;; wil send them data at %p\n", inet_ntoa(from.sin_addr), buffer, Data->cpu_frame); // TODO: Events like admin prompt, and sleep change Data pointer, check for somehow
+                        //printfN(str);
 
                         // First create our 640*480 rect
                         for (unsigned int i = 0; i < height; i++)
-                                memcpy(resizedFrame + (width * i * bytedepth), (const char*)Data->cpu_frame + ((serverwidth * bytedepth) * i), width * bytedepth); 
+                                memcpy(resizedFrame + (width * i * bytedepth),
+                                ((const char*)Data->cpu_frame + ((serverwidth * bytedepth) * (i + monitorYOff[monitorYindex]))) + (bytedepth * monitorXOff[monitorXindex]),
+                                        width * bytedepth);
 
-			int sentb;
-			for (int i = 0; i < sendSteps; i++)
-			{
-				//sentb = sendto(socketS, (const char*)Data->cpu_frame + (sendSize * i), sendSize, 0, (sockaddr*)&from, fromlen);
+                        int sentb;
+                        for (int i = 0; i < sendSteps; i++)
+                        {
+                                //sentb = sendto(socketS, (const char*)Data->cpu_frame + (sendSize * i), sendSize, 0, (sockaddr*)&from, fromlen);
                                 sentb = sendto(socketS, (const char*)resizedFrame + (sendSize * i), sendSize, 0, (sockaddr*)&from, fromlen);
-				sprintf(str, "Sending chunk %d\n", i);
-				//printfN(str);
-				Sleep(sendSleep);
-			}
+                                sprintf(str, "Sending chunk %d\n", i);
+                                //printfN(str);
+                                Sleep(sendSleep);
+                        }
 
-			if (sentb == SOCKET_ERROR)
-			{
-				wchar_t* s = NULL;
-				FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-					NULL, WSAGetLastError(),
-					MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-					(LPWSTR)&s, 0, NULL);
-				sprintf(str, "\nSOCKET ERROR: %S\n", s);
-				printfN(str);
-				LocalFree(s);
-			}
+                        if (sentb == SOCKET_ERROR)
+                        {
+                                wchar_t* s = NULL;
+                                FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                        NULL, WSAGetLastError(),
+                                        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                        (LPWSTR)&s, 0, NULL);
+                                sprintf(str, "\nSOCKET ERROR: %S\n", s);
+                                printfN(str);
+                                LocalFree(s);
+                        }
 
-			//sendto(socketS, (const char*)buffer, sizeof(buffer), 0, (sockaddr*)&from, fromlen);
-			sprintf(str, "Sent! Sent bytes: %d\n", sentb);
-			printfN(str);
+                        //sendto(socketS, (const char*)buffer, sizeof(buffer), 0, (sockaddr*)&from, fromlen);
+                        sprintf(str, "Sent! Sent bytes: %d; for the %d time\n XOFF: %d, YOFF: %d\nPORT: %d\n\n", sentb, timessent, monitorXindex, monitorYindex, port);
+                        //printfN(str);
+
+                        timessent++;
                 }
+                else
+                {
+                        wchar_t* s = NULL;
+                        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                NULL, WSAGetLastError(),
+                                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                (LPWSTR)&s, 0, NULL);
+                        sprintf(str, "\nSOCKET ERROR: %S\n", s);
+                        printfN(str);
+                        LocalFree(s);
+                }
+
 
                 //Sleep(50);
         }
 
         closesocket(socketS);
 
+
         return 0;
 }
 
-void testThread(int id, void **data)
+
+#define MONITOR_X 3
+#define MONITOR_Y 4
+
+void serverStartThread(void **data)
 {
+        int monitor_count_x = 3;
+        int monitor_count_y = 4;
+        monitorXOff = (unsigned int*)malloc(sizeof(unsigned int) * monitor_count_x);
+        monitorYOff = (unsigned int*)malloc(sizeof(unsigned int) * monitor_count_y);
+        monitorXOff[0] = 0;
+        monitorXOff[1] = 360;
+        monitorXOff[2] = 720;
+        monitorYOff[0] = 0;
+        monitorYOff[1] = 270;
+        monitorYOff[2] = 540;
+        monitorYOff[3] = 810;
+
+
+
+        // Startup our TCP port
+        thread tcpthread(socket_setup_thread, 6969);
+
+        int baseUDPport = 6970;
+
         char str[1024];
-        sprintf_s(str, "Firing up socket thread: %d \n", id);
-        printfN(str);
-        socket_server_main(data);
+
+        thread sendThreads[MONITOR_X * MONITOR_Y];
+        int ti = 0;
+        for (int j = 0; j < MONITOR_Y; j++)
+                for (int i = 0; i < MONITOR_X; i++)
+                {
+                        sprintf_s(str, "Firing up socket thread: %d %d\n", i, j);
+                        printfN(str);
+                        sendThreads[ti] = thread(socket_server_main, data, baseUDPport+ti, i, j);
+                        ti++;
+                }
+
+        // Just some test code
+        //thread th(socket_server_main, data, 6969, 0, 0);
+
+
+        while (true)
+                Sleep(1);
 }
