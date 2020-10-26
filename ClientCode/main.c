@@ -18,7 +18,11 @@
 #define SANITY_CHECK_CHAR 'a'
 
 int tcpport = 6969;
-char *ip = "192.168.88.238";
+char *ip = "192.168.88.240";
+
+
+
+#define _DEBUG 1
 
 struct setupData 
 {
@@ -223,9 +227,21 @@ int main(int argc, char *argv[])
 
 start:
 
-	while ((setupInfo = getSetupData(ip, tcpport)) == NULL); // Keep trying to get setup data until it works
+	//while ((setupInfo = getSetupData(ip, tcpport)) == NULL); // Keep trying to get setup data until it works
 
 	//return;
+
+	setupInfo = malloc(sizeof (struct setupData));
+	setupInfo->width = 60;
+	setupInfo->height = 30;
+	setupInfo->port = 6969;
+	setupInfo->id = 0;
+	setupInfo->maxerrors = 2;
+	setupInfo->endian = 0;
+	setupInfo->sendsteps = 4;
+	setupInfo->fullscreen = 0;
+	setupInfo->fullrebooterrors = 4;
+	setupInfo->sanitycheck = 6969;
 
 	srand(time(NULL));
 	
@@ -266,12 +282,14 @@ start:
 	char *hello = "Hello from client";
 	struct sockaddr_in servaddr;
 
+
 	// Creating socket file descriptor
 	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) 
 	{
 		perror("socket creation failed");
 		exit(EXIT_FAILURE);
 	}
+
 
 	memset(&servaddr, 0, sizeof(servaddr));
 
@@ -293,7 +311,7 @@ start:
 	struct timeval tv;
 	// Setup timeout
 	tv.tv_sec = 0;
-	tv.tv_usec = 300000; // 300ms timeout
+	tv.tv_usec = 900000; // 900ms timeout
 	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0)
 		printf("Failed to set socket option...\n\n");
 
@@ -301,14 +319,10 @@ start:
 	char *imgnetbuf = malloc(recvsize+1);
 
 
-	#define _DEBUG 1
-
-
 
 	SDL_Event event;
 	
 	int errorcount = 0;
-	int maxerrors = 8;
 	int shouldexit = 0;
 	int totalfailures = 0;
 	Uint32 ticks;
@@ -372,8 +386,8 @@ start:
 			{
 				errorcount++;
 				printf("ERROR: Error when recieving chunk from server, expected %d bytes, got %d\n", recvsize, n);
-				printf("This is the %d error in a row out of %d tolerable errors\n", errorcount, maxerrors);
-				if (errorcount > maxerrors)
+				printf("This is the %d error in a row out of %d tolerable errors\n", errorcount, setupInfo->maxerrors);
+				if (errorcount > setupInfo->maxerrors)
 				{
 					printf("Maximum errors exceeded, restarting...\n\n");
 					errorcount = 0;
